@@ -1,0 +1,12 @@
+customPalettes:
+  - type: PAL_GEOSCAPE
+    target: PAL_GEOSCAPE
+    file: Resources/Pals/GEOhybrid-1.pal
+extraSprites:
+  - type: TEXTURE.DAT
+    width: 800
+    height: 96
+    subX: 32
+    subY: 32
+    files:
+      0: Resources/Globe/Rabblings_Textures.png

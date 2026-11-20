@@ -6,13 +6,13 @@ STEP_X, STEP_Y = 4.0, 4.0
 NX, NY = int(360/STEP_X), int(180/STEP_Y)
 
 # ---- landmasses: name, lon, lat, rx, ry (degrees), biome weights (forest, farm, mountain, desert, polar)
-CONT = [("Ashfall",    55, 32, 38, 28, dict(forest=2, farm=2, mountain=3, desert=5, polar=0), "DESERT"),
-        ("Thornmarch", 150,  8, 42, 30, dict(forest=6, farm=3, mountain=2, desert=1, polar=0), "JUNGLE"),
-        ("Gloamreach", 250,-12, 40, 30, dict(forest=4, farm=2, mountain=3, desert=2, polar=1), "FOREST"),
-        ("Cinderspine",330, 42, 26, 22, dict(forest=2, farm=1, mountain=5, desert=1, polar=3), "MOUNT"),
-        ("Shards",     105,-50, 34, 16, dict(forest=1, farm=1, mountain=4, desert=2, polar=3), "POLAR"),
-        ("Veilmoor",   200, 50, 24, 18, dict(forest=5, farm=2, mountain=2, desert=0, polar=2), "FOREST"),
-        ("Drowned Reach",300,-45,26, 16, dict(forest=2, farm=2, mountain=4, desert=1, polar=2), "MOUNT")]
+CONT = [("Ashfall",    55, 32, 38, 28, dict(forest=2, farm=2, mountain=3, desert=5, polar=0, vortex=1), "DESERT"),
+        ("Thornmarch", 150,  8, 42, 30, dict(forest=6, farm=3, mountain=2, desert=1, polar=0, vortex=0), "JUNGLE"),
+        ("Gloamreach", 250,-12, 40, 30, dict(forest=4, farm=2, mountain=3, desert=2, polar=1, vortex=2), "FOREST"),
+        ("Cinderspine",330, 42, 26, 22, dict(forest=2, farm=1, mountain=5, desert=1, polar=3, vortex=2), "MOUNT"),
+        ("Shards",     105,-50, 34, 16, dict(forest=1, farm=1, mountain=4, desert=2, polar=3, vortex=2), "POLAR"),
+        ("Veilmoor",   200, 50, 24, 18, dict(forest=5, farm=2, mountain=2, desert=0, polar=2, vortex=2), "FOREST"),
+        ("Drowned Reach",300,-45,26, 16, dict(forest=2, farm=2, mountain=4, desert=1, polar=2, vortex=3), "MOUNT")]
 ISL = [(random.uniform(5,355), random.uniform(-62,66), random.uniform(3,8), random.uniform(2.5,5)) for _ in range(60)]
 
 # ---- smooth value noise
@@ -68,7 +68,7 @@ def nearest_seed(lon,lat):
         if d<bd: bd=d;best=k
     return best
 SEED_ROLL={}
-BIOMES=["forest","farm","mountain","desert","polar"]
+BIOMES=["forest","farm","mountain","desert","polar","vortex"]
 def pick(w):
     keys=[k for k in BIOMES if w.get(k,0)>0]; ws=[w[k] for k in keys]
     return random.choices(keys,ws)[0]
@@ -78,9 +78,9 @@ def climate(lat,w):
     if a>66: w["polar"]=w.get("polar",0)+9
     elif a>54: w["polar"]=w.get("polar",0)+2; w["mountain"]=w.get("mountain",0)+2
     return w
-GENERIC=dict(forest=3,farm=2,mountain=3,desert=2,polar=1)
+GENERIC=dict(forest=3,farm=2,mountain=3,desert=2,polar=1,vortex=1)
 
-IDS=dict(forest=[0,6,10,11], farm=[1,2,3,4], mountain=[5], desert=[7,8], polar=[9,12])
+IDS=dict(forest=[1,11,3], farm=[2,19,21,22], mountain=[5,6,20,24], desert=[0,7,8,18,23], polar=[9,10], vortex=[4])  # tile ids in the Factions texture sheet
 polys=[]; grid={}; stats=collections.defaultdict(collections.Counter)
 # 1) land cells -> two triangles each (random diagonal)
 tris=[]   # (vertex keys tuple of 3, centre lon, centre lat, owner, polar_cap)
@@ -151,7 +151,7 @@ for m in clusters:
     if k not in SEED_ROLL: SEED_ROLL[k]=pick(w)
     b=SEED_ROLL[k]; r=random.random()
     if r<0.30: b=pick(w)
-    elif r<0.38: b=random.choice(BIOMES[:4])
+    elif r<0.38: b=random.choice(["forest","farm","mountain","desert","vortex"])
     if cap: b="polar"
     for x in m:
         stats_key=(own[0] if own else "Isles")
@@ -175,7 +175,8 @@ MIX={ "forest":[("FOREST",45),("JUNGLE",25),("MOUNT",15),("CULTA",15)],
       "farm":  [("CULTA",50),("FOREST",20),("JUNGLE",10),("MOUNT",10),("DESERT",10)],
       "mountain":[("MOUNT",55),("FOREST",15),("POLAR",15),("DESERT",15)],
       "desert":[("DESERT",55),("MOUNT",25),("CULTA",10),("JUNGLE",10)],
-      "polar": [("POLAR",60),("MOUNT",30),("FOREST",10)] }
+      "polar": [("POLAR",60),("MOUNT",30),("FOREST",10)],
+      "vortex":[("MOUNT",35),("DESERT",30),("FOREST",20),("JUNGLE",15)] }
 # continent flavour (lon1,lon2,lat1,lat2)
 FLAV=[(c[6],30,[round(c[1]-c[3]*.9),round(c[1]+c[3]*.9),round(c[2]-c[4]*.9),round(c[2]+c[4]*.9)]) for c in CONT]
 tx=["  textures:"]
@@ -195,12 +196,13 @@ open(OUT+"/Ruleset/globe.rul","w").write("\n".join(yml)+"\n")
 open(OUT+"/metadata.yml","w").write("""id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.5
+version: 0.0.6
 author: Luke83
 isMaster: false
 master: xcom1
+requiredExtendedVersion: "5.5.1"
 """)
-open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.5 (placeholder world, mixed biomes)
+open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.6 (placeholder world, mixed biomes)
 Install: copy this folder into OXCE's mods folder (Android: /sdcard/openxcom/mods/), Options > Mods, enable, restart, start a NEW game.
 Regions/countries/cities are still vanilla Earth (mismatch expected).
 Each globe texture now maps to a weighted mix of battlescape terrains, plus continent flavour boxes.
