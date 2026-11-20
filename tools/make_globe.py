@@ -188,15 +188,22 @@ for b,ids in IDS.items():
         for n,wt,ar in FLAV:
             tx.append("        - name: %s"%n); tx.append("          weight: %d"%wt); tx.append("          area: [%s]"%", ".join(map(str,ar)))
 
-yml=["globe:","  polygons:"]
+# open sea is drawn as big quads FIRST (land polygons are drawn on top of them); ocean textures are draw-only (isOcean), no terrain, so no sea missions
+ocean=[]
+for la in range(-90,90,10):
+    for lo in range(0,360,10):
+        ocean.append([random.choice([13,14,15,16]), lo,la, lo+10,la, lo+10,la+10, lo,la+10])
+polys=ocean+polys
+yml=["globe:","  oceanPalette: 13","  oceanShading: false","  countryColor: 239","  cityColor: 81","  baseColor: 133","  lineColor: 210","  polygons:"]
 for p in polys: yml.append("    - ["+", ".join(str(x) for x in p)+"]")
+tx+=[l for t in (13,14,15,16) for l in ("    - id: %d"%t,"      isOcean: true")]
 yml+=["  polylines:","    - [0, -85, 1, -85]"]+tx
 os.makedirs(OUT+"/Ruleset",exist_ok=True)
 open(OUT+"/Ruleset/globe.rul","w").write("\n".join(yml)+"\n")
 open(OUT+"/metadata.yml","w").write("""id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.7
+version: 0.0.8
 author: Luke83
 isMaster: false
 master: xcom1
