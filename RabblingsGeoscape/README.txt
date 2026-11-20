@@ -6,4 +6,4 @@ Each globe texture now maps to a weighted mix of battlescape terrains, plus cont
 v0.0.6: uses the OXC Factions Geoscape palette (Resources/Pals/GEOhybrid-1.pal) and texture sheet (Resources/Globe/Rabblings_Textures.png).
 The sheet only works with that palette; both come from the Factions mod by Luke83. Land tiles only, ocean tiles unused.
 Textures: 4 = purple vortex lands; 9,10 = polar; 5,6,20,24 = rock; 0,7,8,18,23 = sand/scrub; 1,3,11 = forest; 2,19,21,22 = open green.
-v0.0.12: IDT logo shown as the startup splash (the game's intro cutscene, Ruleset/intro.rul). Turn "Play intro" on in Options if it doesn't show.
+v0.0.13: IDT logo shown as the startup splash (the game's intro cutscene, Ruleset/intro.rul). Turn "Play intro" on in Options if it doesn't show.

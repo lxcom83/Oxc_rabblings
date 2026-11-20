@@ -12,3 +12,9 @@ Tiles are painted by tools/make_tiles.py in the GEOhybrid-1 palette (ice and oce
 | Rime | 9, 10 | pale ice | POLAR, MOUNT, FOREST |
 | Vortex | 4, 27, 28 | scorched earth with ember spiral arms | MOUNT, DESERT, FOREST, JUNGLE |
 | Sea (draw only) | 13-16 | blue | none (no sea missions) |
+
+## Shading rule (important)
+OXCE darkens land at night by adding up to +10 to each pixel's palette index, capped at the end of its 16-colour block.
+Tiles may therefore only use palette blocks that darken smoothly to their last entry: 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14.
+Blocks 0, 5, 6 and 15 contain bright greens, lime and cyan in their tails and must not be used (v0.0.12 did, causing cyan/lime speckles on the night side).
+tools/make_tiles.py follows this rule.

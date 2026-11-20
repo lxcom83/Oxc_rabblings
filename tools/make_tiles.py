@@ -1,4 +1,6 @@
-"""Paint the Rabblings globe texture sheet (indexed to GEOhybrid-1.pal).
+"""SHADING RULE: OXCE adds up to +10 to a land pixel's palette index (capped at the end of its 16-colour block),
+so only use blocks that darken smoothly to the end: 1,2,3,4,7,8,9,10,11,12,13,14. NEVER 0,5,6,15.
+Paint the Rabblings globe texture sheet (indexed to GEOhybrid-1.pal).
 Layout: 29 columns x 3 rows of 32x32 tiles (row = zoom detail). Tile id = column.
 Usage: python3 make_tiles.py <old_sheet.png> <palette.pal> <out.png> [preview.png]"""
 import sys, math, random
@@ -27,7 +29,7 @@ def tile(kind,seed,g):
     rs=np.random.RandomState(seed); n1=vnoise(rs,g); n2=vnoise(rs,g+1); n3=vnoise(rs,g*2,2)
     t=np.zeros((32,32),np.uint8)
     if kind=="gloom":
-        t=ramp(n1,1,2,11,rs); m=n2>0.58; t[m]=ramp(n3,15,2,4,rs)[m]; m=(n3>0.72); t[m]=ramp(n1,1,12,15,rs)[m]
+        t=ramp(n1,1,2,11,rs); m=n2>0.58; t[m]=ramp(n3,7,7,11,rs)[m]; m=(n3>0.72); t[m]=ramp(n1,1,12,15,rs)[m]
     elif kind=="fen":
         t=ramp(n1,14,0,8,rs); m=n2>0.60; t[m]=ramp(n3,13,5,8,rs)[m]
         m=(rs.rand(32,32)>0.93)&~(n2>0.60); t[m]=ramp(n1,7,6,10,rs)[m]
@@ -35,12 +37,12 @@ def tile(kind,seed,g):
         t=ramp(n1,9,0,9,rs); m=n2>0.55; t[m]=ramp(n3,4,4,9,rs)[m]
         m=(rs.rand(32,32)>0.95); t[m]=9*16+13
     elif kind=="crag":
-        t=ramp(n1,5,3,8,rs); m=ridge(n2)>0.86; t[m]=5*16+9
-        m=n3>0.7; t[m]=ramp(n1,6,4,8,rs)[m]
+        t=ramp(n1,10,2,8,rs); m=ridge(n2)>0.86; t[m]=10*16+13
+        m=n3>0.7; t[m]=ramp(n1,9,3,8,rs)[m]
     elif kind=="ash":
         t=ramp(n1,9,0,5,rs); m=n2>0.55; t[m]=ramp(n3,10,3,7,rs)[m]; m=n3>0.78; t[m]=ramp(n1,8,5,8,rs)[m]
     elif kind=="slag":
-        t=ramp(n1,5,6,9,rs,0.6); m=n2>0.55; t[m]=ramp(n3,8,2,6,rs)[m]
+        t=ramp(n1,10,9,13,rs,0.6); m=n2>0.55; t[m]=ramp(n3,8,2,6,rs)[m]
         m=ridge(vnoise(rs,g+2,2))>0.90; t[m]=ramp(n1,8,0,2,rs)[m]
     elif kind=="vortex":
         ys,xs=np.mgrid[0:32,0:32]; cx,cy=15.5+rs.uniform(-4,4),15.5+rs.uniform(-4,4)
