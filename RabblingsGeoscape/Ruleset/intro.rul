@@ -1,0 +1,8 @@
+cutscenes:
+  - delete: intro
+  - type: intro
+    useUfoAudioSequence: false
+    slideshow:
+      transitionSeconds: 5
+      slides:
+        - imagePath: Resources/Cutscenes/IDT_Splash.png

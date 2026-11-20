@@ -196,7 +196,7 @@ open(OUT+"/Ruleset/globe.rul","w").write("\n".join(yml)+"\n")
 open(OUT+"/metadata.yml","w").write("""id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.6
+version: 0.0.7
 author: Luke83
 isMaster: false
 master: xcom1
