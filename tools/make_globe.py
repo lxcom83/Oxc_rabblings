@@ -6,12 +6,14 @@ STEP_X, STEP_Y = 4.0, 4.0
 NX, NY = int(360/STEP_X), int(180/STEP_Y)
 
 # ---- landmasses: name, lon, lat, rx, ry (degrees), biome weights (forest, farm, mountain, desert, polar)
-CONT = [("Ashfall",   60, 35, 32, 24, dict(forest=2, farm=2, mountain=3, desert=5, polar=0)),
-        ("Thornmarch",150, 10, 40, 26, dict(forest=6, farm=3, mountain=2, desert=1, polar=0)),
-        ("Gloamreach",250,-15, 34, 25, dict(forest=4, farm=2, mountain=3, desert=2, polar=1)),
-        ("Cinderspine",320, 42, 24, 18, dict(forest=2, farm=1, mountain=5, desert=1, polar=3)),
-        ("Shards",    110,-48, 28, 13, dict(forest=1, farm=1, mountain=4, desert=2, polar=3))]
-ISL = [(random.uniform(5,355), random.uniform(-58,62), random.uniform(2.5,6), random.uniform(2,4.5)) for _ in range(30)]
+CONT = [("Ashfall",    55, 32, 38, 28, dict(forest=2, farm=2, mountain=3, desert=5, polar=0), "DESERT"),
+        ("Thornmarch", 150,  8, 42, 30, dict(forest=6, farm=3, mountain=2, desert=1, polar=0), "JUNGLE"),
+        ("Gloamreach", 250,-12, 40, 30, dict(forest=4, farm=2, mountain=3, desert=2, polar=1), "FOREST"),
+        ("Cinderspine",330, 42, 26, 22, dict(forest=2, farm=1, mountain=5, desert=1, polar=3), "MOUNT"),
+        ("Shards",     105,-50, 34, 16, dict(forest=1, farm=1, mountain=4, desert=2, polar=3), "POLAR"),
+        ("Veilmoor",   200, 50, 24, 18, dict(forest=5, farm=2, mountain=2, desert=0, polar=2), "FOREST"),
+        ("Drowned Reach",300,-45,26, 16, dict(forest=2, farm=2, mountain=4, desert=1, polar=2), "MOUNT")]
+ISL = [(random.uniform(5,355), random.uniform(-62,66), random.uniform(3,8), random.uniform(2.5,5)) for _ in range(60)]
 
 # ---- smooth value noise
 def mk_noise(sz, s):
@@ -28,15 +30,15 @@ n_coast = mk_noise(40, seed+1); n_fine = mk_noise(90, seed+2)
 def land_val(lon,lat):
     v=-9; owner=None
     for c in CONT:
-        n,cx,cy,rx,ry,_=c
+        n,cx,cy,rx,ry,_,_f=c
         dx=(lon-cx+180)%360-180; dy=lat-cy
         d=math.hypot(dx/rx,dy/ry)
-        s=1.0-d + (n_coast(lon,lat)-0.5)*0.9 + (n_fine(lon,lat)-0.5)*0.35
+        s=1.0-d*0.72 + (n_coast(lon,lat)-0.5)*0.9 + (n_fine(lon,lat)-0.5)*0.35
         if s>v: v=s; owner=c
     for (cx,cy,rx,ry) in ISL:
         dx=(lon-cx+180)%360-180; dy=lat-cy
         d=math.hypot(dx/rx,dy/ry)
-        s=1.0-d + (n_fine(lon,lat)-0.5)*0.5
+        s=1.0-d*0.8 + (n_fine(lon,lat)-0.5)*0.5
         if s>v: v=s; owner=None
     return v, owner
 
@@ -82,7 +84,7 @@ for j in range(NY):
         clon=(i+.5)*STEP_X; clat=-90+(j+.5)*STEP_Y
         v,own=land_val(clon,clat)
         cap = abs(clat)>=82
-        if v<0.04 and not cap: continue
+        if v<0.0 and not cap: continue
         p00,p10,p11,p01=(i,j),(i+1,j),(i+1,j+1),(i,j+1)
         pair=((p00,p10,p11),(p00,p11,p01)) if random.random()<.5 else ((p00,p10,p01),(p10,p11,p01))
         for t,tri in enumerate(pair):
@@ -103,7 +105,7 @@ order=list(range(len(tris))); random.shuffle(order)
 clusters=[]
 for s0 in order:
     if tris[s0]["cl"] is not None: continue
-    target=random.randint(1,3) if random.random()<.35 else random.randint(3,7)
+    rr=random.random(); target=random.randint(2,5) if rr<.20 else (random.randint(6,12) if rr<.65 else random.randint(12,20))
     cid=len(clusters); members=[s0]; tris[s0]["cl"]=cid
     front=[s0]
     while len(members)<target:
@@ -115,7 +117,7 @@ for s0 in order:
 singles_left=0
 for cid,m in enumerate(clusters):
     if len(m)==1:
-        x=m[0]; nb=[tris[y]["cl"] for y in adj[x] if tris[y]["cl"]!=cid and tris[y]["cap"]==tris[x]["cap"] and len(clusters[tris[y]["cl"]])<8]
+        x=m[0]; nb=[tris[y]["cl"] for y in adj[x] if tris[y]["cl"]!=cid and tris[y]["cap"]==tris[x]["cap"] and len(clusters[tris[y]["cl"]])<24]
         if nb:
             to=random.choice(nb); clusters[to].append(x); tris[x]["cl"]=to; clusters[cid]=[]
         else: singles_left+=1
@@ -147,7 +149,7 @@ for m in clusters:
         else:
             for x in xs:
                 polys.append([random.choice(IDS[b])]+[c for k in tris[x]["v"] for c in V[k]]); shapes["tri"]+=1
-print("clusters:",len(clusters),"sizes:",dict(sorted(collections.Counter(len(m) for m in clusters).items())),"isolated singles:",singles_left)
+print("land (excl polar caps) %.0f%% of globe"%(100*sum(1 for t in tris if not t["cap"])/2/(NX*NY)));print("clusters:",len(clusters),"sizes:",dict(sorted(collections.Counter(len(m) for m in clusters).items())),"isolated singles:",singles_left)
 print("shapes:",dict(shapes))
 
 # ---- textures: each texture id mixes several battlescape terrains (names verified against vanilla xcom1 globe.rul)
@@ -157,7 +159,7 @@ MIX={ "forest":[("FOREST",45),("JUNGLE",25),("MOUNT",15),("CULTA",15)],
       "desert":[("DESERT",55),("MOUNT",25),("CULTA",10),("JUNGLE",10)],
       "polar": [("POLAR",60),("MOUNT",30),("FOREST",10)] }
 # continent flavour (lon1,lon2,lat1,lat2)
-FLAV=[("DESERT",30,[28,92,11,59]),("JUNGLE",30,[108,192,-16,36]),("FOREST",30,[216,284,-40,10]),("MOUNT",30,[296,344,24,60]),("POLAR",25,[82,138,-62,-34])]
+FLAV=[(c[6],30,[round(c[1]-c[3]*.9),round(c[1]+c[3]*.9),round(c[2]-c[4]*.9),round(c[2]+c[4]*.9)]) for c in CONT]
 tx=["  textures:"]
 for b,ids in IDS.items():
     for tid in ids:
@@ -175,12 +177,12 @@ open(OUT+"/Ruleset/globe.rul","w").write("\n".join(yml)+"\n")
 open(OUT+"/metadata.yml","w").write("""id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.3
+version: 0.0.4
 author: Luke83
 isMaster: false
 master: xcom1
 """)
-open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.3 (placeholder world, mixed biomes)
+open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.4 (placeholder world, mixed biomes)
 Install: copy this folder into OXCE's mods folder (Android: /sdcard/openxcom/mods/), Options > Mods, enable, restart, start a NEW game.
 Regions/countries/cities are still vanilla Earth (mismatch expected).
 Each globe texture now maps to a weighted mix of battlescape terrains, plus continent flavour boxes.

@@ -1,7 +1,7 @@
 id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.3
+version: 0.0.4
 author: Luke83
 isMaster: false
 master: xcom1
