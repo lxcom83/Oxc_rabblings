@@ -35,7 +35,7 @@ def land_val(lon,lat,ch=True):
         rx*=1.18; ry*=1.18
         dx=(lon-cx+180)%360-180; dy=lat-cy
         d=math.hypot(dx/rx,dy/ry)
-        sc.append((1.0-d*0.72 + (n_coast(lon,lat)-0.5)*0.9 + (n_fine(lon,lat)-0.5)*0.35, ("c",k)))
+        sc.append((1.0-d*0.70 + (n_coast(lon,lat)-0.5)*0.8 + (n_fine(lon,lat)-0.5)*0.35, ("c",k)))
     for k,(cx,cy,rx,ry) in enumerate(ISL):
         dx=(lon-cx+180)%360-180; dy=lat-cy
         d=math.hypot(dx/rx,dy/ry)
@@ -44,9 +44,33 @@ def land_val(lon,lat,ch=True):
     v,oid=sc[0]; v2=sc[1][0]
     own=CONT[oid[1]] if oid[0]=="c" else None
     # channel between two landmasses
-    if ch and v2>0.0 and v-v2<GAP: v=-9
+    vv=v
+    if v2>-0.45: vv=v+0.5*(v2+0.45)       # fill valleys between neighbouring landmasses
+    if ch and v2>0.0 and v-v2<GAP: return -9,own,oid
+    v=vv
     return v, own, oid
 
+
+
+# ---- fill enclosed seas (lakes / holes ringed by land) so continents read as solid land
+FW,FH=180,90
+def _isl(i,j): return land_val((i+.5)*2,-90+(j+.5)*2)[0]>=-0.06 or abs(-90+(j+.5)*2)>=81
+LAND=[[_isl(i,j) for i in range(FW)] for j in range(FH)]
+comp={}; comps=[]
+for j in range(FH):
+    for i in range(FW):
+        if LAND[j][i] or (i,j) in comp: continue
+        cid=len(comps); q=[(i,j)]; comp[(i,j)]=cid; cells=[]
+        while q:
+            x,y=q.pop(); cells.append((x,y))
+            for nx,ny in (((x+1)%FW,y),((x-1)%FW,y),(x,y+1),(x,y-1)):
+                if 0<=ny<FH and not LAND[ny][nx] and (nx,ny) not in comp: comp[(nx,ny)]=cid; q.append((nx,ny))
+        comps.append(cells)
+big=max(range(len(comps)),key=lambda c:len(comps[c]))
+FILL=set()
+for c,cells in enumerate(comps):
+    if c!=big and len(cells)<=120: FILL.update(cells)     # up to ~240 sq deg of enclosed sea becomes land
+print("enclosed sea cells filled:",len(FILL))
 
 # ---- irregular variable-density point set + Delaunay: small triangles at coasts, big ones inland, no grid
 import numpy as np
@@ -55,7 +79,7 @@ def cosl(lat): return max(math.cos(math.radians(lat)),0.35)
 def spacing(lon,lat):
     if abs(lat)>=80: return 5.0
     v=land_val(lon,lat,False)[0]
-    if v<-0.45: return None
+    if v<-0.45: return random.uniform(5.5,8.0)
     t=min(1.0,max(0.0,(abs(v-0.05)-0.0)/0.55))      # 0 at coast, 1 deep inland / deep sea
     return (1.5+3.2*t)*random.uniform(0.8,1.35)
 PTS=[]; CELL=2.0; hashg=collections.defaultdict(list)
@@ -91,7 +115,7 @@ DT=Delaunay(P)
 print("points",len(P),"triangles",len(DT.simplices))
 V={i:(float(P[i][0]),float(P[i][1])) for i in range(len(P))}
 polys=[]; grid={}; stats=collections.defaultdict(collections.Counter)
-tris=[]
+tris=[]; SEA=[]; KILLED=set()
 for s in DT.simplices:
     tri=tuple(int(k) for k in s)
     cx=sum(V[k][0] for k in tri)/3; cy=sum(V[k][1] for k in tri)/3
@@ -99,7 +123,11 @@ for s in DT.simplices:
     if max(xs)-min(xs)>40: continue
     cap = abs(cy)>=81
     v,own,oid=land_val(cx,cy)
-    if v<-0.06 and not cap: continue
+    if v<-0.06 and not cap and (int(cx//2)%FW,int((cy+90)//2)) in FILL:
+        v,own,oid=land_val(cx,cy,False); v=max(v,0.05)
+        if v<0.0: v,own,oid=0.05,None,None
+    if v<-0.06 and not cap:
+        SEA.append(tri); continue
     # reject long thin slivers
     tris.append(dict(v=tri,cx=cx,cy=cy,own=own,oid=(None if cap else oid),cap=cap,cell=len(tris),cl=None))
 def build_adj(vertex=False):
@@ -123,8 +151,43 @@ for _round in range(8):
                 kill.add(x); kill.add(y)
     print("round",_round,"contacts to clear:",len(kill))
     if not kill: break
+    SEA+=[t["v"] for n,t in enumerate(tris) if n in kill]; KILLED.update(t["v"] for n,t in enumerate(tris) if n in kill)
     tris=[t for n,t in enumerate(tris) if n not in kill]
     for n,t in enumerate(tris): t["cell"]=n
+
+# ---- turn small enclosed sea patches (not rift channels) into land
+def sea_components():
+    em=collections.defaultdict(list)
+    for n,tv in enumerate(SEA):
+        for e in ((tv[0],tv[1]),(tv[1],tv[2]),(tv[2],tv[0])): em[frozenset(e)].append(n)
+    seen=set(); out=[]
+    for n0 in range(len(SEA)):
+        if n0 in seen: continue
+        q=[n0]; seen.add(n0); comp=[]
+        while q:
+            x=q.pop(); comp.append(x); tv=SEA[x]
+            for e in ((tv[0],tv[1]),(tv[1],tv[2]),(tv[2],tv[0])):
+                for y in em[frozenset(e)]:
+                    if y not in seen: seen.add(y); q.append(y)
+        out.append(comp)
+    return out
+vown=collections.defaultdict(list)
+for t in tris:
+    for k in t["v"]: vown[k].append(t)
+conv=0; keep=[]; drop=set()
+for comp in sea_components():
+    tvs=[SEA[x] for x in comp]
+    continue  # lakes are kept (disabled)
+    if len(comp)>45 or any(tv in KILLED for tv in tvs): continue
+    nb=[t for tv in tvs for k in tv for t in vown.get(k,[]) if t["oid"]]
+    oids={t["oid"] for t in nb}
+    if len(oids)!=1: continue                    # touches 0 or 2+ landmasses: leave as sea
+    t0=nb[0]
+    for x in comp:
+        tv=SEA[x]; cx=sum(V[k][0] for k in tv)/3; cy=sum(V[k][1] for k in tv)/3
+        tris.append(dict(v=tv,cx=cx,cy=cy,own=t0["own"],oid=t0["oid"],cap=False,cell=len(tris),cl=None)); drop.add(x); conv+=1
+SEA=[tv for n,tv in enumerate(SEA) if n not in drop]
+print("lake triangles converted to land:",conv)
 adj=build_adj()
 order=list(range(len(tris))); random.shuffle(order)
 clusters=[]
@@ -235,11 +298,10 @@ for b,ids in IDS.items():
             tx.append("        - name: %s"%n); tx.append("          weight: %d"%wt); tx.append("          area: [%s]"%", ".join(map(str,ar)))
 
 # open sea is drawn as big quads FIRST (land polygons are drawn on top of them); ocean textures are draw-only (isOcean), no terrain, so no sea missions
-ocean=[]
-for la in range(-90,90,10):
-    for lo in range(0,360,10):
-        ocean.append([random.choice([13,14,15,16]), lo,la, lo+10,la, lo+10,la+10, lo,la+10])
-polys=ocean+polys
+# sea = the leftover Delaunay triangles (no overlap with land, so base/landing lookups hit real land); ocean textures are draw-only (isOcean), no terrain
+ocean=[[random.choice([13,14,15,16])]+[c for k in tri for c in V[k]] for tri in SEA]
+print("sea triangles:",len(ocean))
+polys=polys+ocean
 yml=["globe:","  oceanPalette: 13","  oceanShading: false","  countryColor: 239","  cityColor: 81","  baseColor: 133","  lineColor: 210","  polygons:"]
 for p in polys: yml.append("    - ["+", ".join(str(x) for x in p)+"]")
 tx+=[l for t in (13,14,15,16) for l in ("    - id: %d"%t,"      isOcean: true")]
@@ -255,7 +317,7 @@ isMaster: false
 master: xcom1
 requiredExtendedVersion: "5.5.1"
 """)
-open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.9 (placeholder world, mixed biomes)
+open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.11 (placeholder world, mixed biomes)
 Install: copy this folder into OXCE's mods folder (Android: /sdcard/openxcom/mods/), Options > Mods, enable, restart, start a NEW game.
 Regions/countries/cities are still vanilla Earth (mismatch expected).
 Each globe texture now maps to a weighted mix of battlescape terrains, plus continent flavour boxes.
