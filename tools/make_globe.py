@@ -27,20 +27,25 @@ def mk_noise(sz, s):
     return f
 n_coast = mk_noise(40, seed+1); n_fine = mk_noise(90, seed+2)
 
+GAP=0.20   # score margin below which a cell between two landmasses becomes sea channel
 def land_val(lon,lat):
-    v=-9; owner=None
-    for c in CONT:
+    sc=[]
+    for k,c in enumerate(CONT):
         n,cx,cy,rx,ry,_,_f=c
+        rx*=1.18; ry*=1.18
         dx=(lon-cx+180)%360-180; dy=lat-cy
         d=math.hypot(dx/rx,dy/ry)
-        s=1.0-d*0.72 + (n_coast(lon,lat)-0.5)*0.9 + (n_fine(lon,lat)-0.5)*0.35
-        if s>v: v=s; owner=c
-    for (cx,cy,rx,ry) in ISL:
+        sc.append((1.0-d*0.72 + (n_coast(lon,lat)-0.5)*0.9 + (n_fine(lon,lat)-0.5)*0.35, ("c",k)))
+    for k,(cx,cy,rx,ry) in enumerate(ISL):
         dx=(lon-cx+180)%360-180; dy=lat-cy
         d=math.hypot(dx/rx,dy/ry)
-        s=1.0-d*0.8 + (n_fine(lon,lat)-0.5)*0.5
-        if s>v: v=s; owner=None
-    return v, owner
+        sc.append((1.0-d*0.8 + (n_fine(lon,lat)-0.5)*0.5, ("i",k)))
+    sc.sort(key=lambda t:-t[0])
+    v,oid=sc[0]; v2=sc[1][0]
+    own=CONT[oid[1]] if oid[0]=="c" else None
+    # channel between two landmasses
+    if v2>0.0 and v-v2<GAP: v=-9
+    return v, own, oid
 
 # ---- jittered lattice (shared vertices => seamless)
 V={}
@@ -82,24 +87,37 @@ tris=[]   # (vertex keys tuple of 3, centre lon, centre lat, owner, polar_cap)
 for j in range(NY):
     for i in range(NX):
         clon=(i+.5)*STEP_X; clat=-90+(j+.5)*STEP_Y
-        v,own=land_val(clon,clat)
+        v,own,oid=land_val(clon,clat)
         cap = abs(clat)>=82
         if v<0.0 and not cap: continue
         p00,p10,p11,p01=(i,j),(i+1,j),(i+1,j+1),(i,j+1)
         pair=((p00,p10,p11),(p00,p11,p01)) if random.random()<.5 else ((p00,p10,p01),(p10,p11,p01))
         for t,tri in enumerate(pair):
             cx=sum(V[k][0] for k in tri)/3; cy=sum(V[k][1] for k in tri)/3
-            tris.append(dict(v=tri,cx=cx,cy=cy,own=own,cap=cap,cell=(i,j),cl=None))
-# 2) adjacency through shared edges
-edge=collections.defaultdict(list)
-for n,t in enumerate(tris):
-    a_,b_,c_=t["v"]
-    for e in ((a_,b_),(b_,c_),(c_,a_)): edge[frozenset(e)].append(n)
-adj=collections.defaultdict(set)
-for lst in edge.values():
-    for x in lst:
-        for y in lst:
-            if x!=y: adj[x].add(y)
+            tris.append(dict(v=tri,cx=cx,cy=cy,own=own,oid=(None if cap else oid),cap=cap,cell=(i,j),cl=None))
+# 2) adjacency through shared edges; remove cells where two different landmasses touch (guarantees a sea channel)
+def build_adj():
+    edge=collections.defaultdict(list)
+    for n,t in enumerate(tris):
+        a_,b_,c_=t["v"]
+        for e in ((a_,b_),(b_,c_),(c_,a_)): edge[frozenset(e)].append(n)
+    adj=collections.defaultdict(set)
+    for lst in edge.values():
+        for x in lst:
+            for y in lst:
+                if x!=y: adj[x].add(y)
+    return adj
+for _round in range(8):
+    adj=build_adj()
+    kill=set()
+    for x in adj:
+        for y in adj[x]:
+            if x<y and tris[x]["oid"] and tris[y]["oid"] and tris[x]["oid"]!=tris[y]["oid"]:
+                kill.add(tris[x]["cell"]); kill.add(tris[y]["cell"])
+    print("round",_round,"contacts to clear:",len(kill))
+    if not kill: break
+    tris=[t for t in tris if t["cell"] not in kill]
+adj=build_adj()
 # 3) grow clusters of 1-3 or 3-7 triangles
 order=list(range(len(tris))); random.shuffle(order)
 clusters=[]
@@ -177,12 +195,12 @@ open(OUT+"/Ruleset/globe.rul","w").write("\n".join(yml)+"\n")
 open(OUT+"/metadata.yml","w").write("""id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.4
+version: 0.0.5
 author: Luke83
 isMaster: false
 master: xcom1
 """)
-open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.4 (placeholder world, mixed biomes)
+open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.5 (placeholder world, mixed biomes)
 Install: copy this folder into OXCE's mods folder (Android: /sdcard/openxcom/mods/), Options > Mods, enable, restart, start a NEW game.
 Regions/countries/cities are still vanilla Earth (mismatch expected).
 Each globe texture now maps to a weighted mix of battlescape terrains, plus continent flavour boxes.
