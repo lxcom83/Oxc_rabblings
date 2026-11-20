@@ -28,7 +28,7 @@ def mk_noise(sz, s):
 n_coast = mk_noise(40, seed+1); n_fine = mk_noise(90, seed+2)
 
 GAP=0.20   # score margin below which a cell between two landmasses becomes sea channel
-def land_val(lon,lat):
+def land_val(lon,lat,ch=True):
     sc=[]
     for k,c in enumerate(CONT):
         n,cx,cy,rx,ry,_,_f=c
@@ -44,16 +44,119 @@ def land_val(lon,lat):
     v,oid=sc[0]; v2=sc[1][0]
     own=CONT[oid[1]] if oid[0]=="c" else None
     # channel between two landmasses
-    if v2>0.0 and v-v2<GAP: v=-9
+    if ch and v2>0.0 and v-v2<GAP: v=-9
     return v, own, oid
 
-# ---- jittered lattice (shared vertices => seamless)
-V={}
-for j in range(NY+1):
-    for i in range(NX+1):
-        jx=0 if i in (0,NX) else random.uniform(-.8,.8)
-        jy=0 if j in (0,NY) else random.uniform(-.8,.8)
-        V[(i,j)]=(round(i*STEP_X+jx,2), round(-90+j*STEP_Y+jy,2))
+
+# ---- irregular variable-density point set + Delaunay: small triangles at coasts, big ones inland, no grid
+import numpy as np
+from scipy.spatial import Delaunay
+def cosl(lat): return max(math.cos(math.radians(lat)),0.35)
+def spacing(lon,lat):
+    if abs(lat)>=80: return 5.0
+    v=land_val(lon,lat,False)[0]
+    if v<-0.45: return None
+    t=min(1.0,max(0.0,(abs(v-0.05)-0.0)/0.55))      # 0 at coast, 1 deep inland / deep sea
+    return (1.5+3.2*t)*random.uniform(0.8,1.35)
+PTS=[]; CELL=2.0; hashg=collections.defaultdict(list)
+def ok(lon,lat,r):
+    ci=int(lon//CELL); cj=int((lat+90)//CELL); R=int(r/CELL/ max(cosl(lat),0.35))+2
+    for di in range(-R,R+1):
+        for dj in range(-int(r/CELL)-2,int(r/CELL)+3):
+            for (x,y) in hashg.get(((ci+di)%int(360/CELL),cj+dj),()):
+                dx=(lon-x+180)%360-180
+                if (dx*cosl(lat))**2+(lat-y)**2 < r*r: return False
+    return True
+def add(lon,lat):
+    PTS.append((lon,lat)); hashg[(int(lon//CELL)%int(360/CELL),int((lat+90)//CELL))].append((lon,lat))
+for lat in np.arange(-90,90.1,3.0):          # fixed seam columns + pole rows
+    PTS.append((0.0,float(lat))); PTS.append((360.0,float(lat)))
+for lon in np.arange(0,360.1,6.0):
+    PTS.append((float(lon),-90.0)); PTS.append((float(lon),90.0))
+for lat0,step in ((82,7.0),(85.5,9.0),(79,8.0)):
+    for sg in (1,-1):
+        lo=0.0
+        while lo<360:
+            PTS.append((round(lo+random.uniform(-1.5,1.5),2) if 0<lo<360 else lo, round(sg*(lat0+random.uniform(-1.2,1.2)),2))); lo+=step*random.uniform(.8,1.2)
+for p in PTS: hashg[(int(p[0]//CELL)%int(360/CELL),int((p[1]+90)//CELL))].append(p)
+tries=0; misses=0
+while misses<30000:
+    lon=random.uniform(0,360); lat=random.uniform(-88,88)
+    r=spacing(lon,lat)
+    if r is None: misses+=1; continue
+    if ok(lon,lat,r): add(lon,lat); misses=0
+    else: misses+=1
+P=np.array([(round(x,2),round(y,2)) for x,y in PTS]); P=np.unique(P,axis=0)
+DT=Delaunay(P)
+print("points",len(P),"triangles",len(DT.simplices))
+V={i:(float(P[i][0]),float(P[i][1])) for i in range(len(P))}
+polys=[]; grid={}; stats=collections.defaultdict(collections.Counter)
+tris=[]
+for s in DT.simplices:
+    tri=tuple(int(k) for k in s)
+    cx=sum(V[k][0] for k in tri)/3; cy=sum(V[k][1] for k in tri)/3
+    xs=[V[k][0] for k in tri]
+    if max(xs)-min(xs)>40: continue
+    cap = abs(cy)>=81
+    v,own,oid=land_val(cx,cy)
+    if v<-0.06 and not cap: continue
+    # reject long thin slivers
+    tris.append(dict(v=tri,cx=cx,cy=cy,own=own,oid=(None if cap else oid),cap=cap,cell=len(tris),cl=None))
+def build_adj(vertex=False):
+    edge=collections.defaultdict(list)
+    for n,t in enumerate(tris):
+        a_,b_,c_=t["v"]
+        keys=[(k,) for k in t["v"]] if vertex else [frozenset(e) for e in ((a_,b_),(b_,c_),(c_,a_))]
+        for e in keys: edge[e].append(n)
+    adj=collections.defaultdict(set)
+    for lst in edge.values():
+        for x in lst:
+            for y in lst:
+                if x!=y: adj[x].add(y)
+    return adj
+for _round in range(8):
+    adj=build_adj(True)
+    kill=set()
+    for x in adj:
+        for y in adj[x]:
+            if x<y and tris[x]["oid"] and tris[y]["oid"] and tris[x]["oid"]!=tris[y]["oid"]:
+                kill.add(x); kill.add(y)
+    print("round",_round,"contacts to clear:",len(kill))
+    if not kill: break
+    tris=[t for n,t in enumerate(tris) if n not in kill]
+    for n,t in enumerate(tris): t["cell"]=n
+adj=build_adj()
+order=list(range(len(tris))); random.shuffle(order)
+clusters=[]
+for s0 in order:
+    if tris[s0]["cl"] is not None: continue
+    rr=random.random(); target=random.randint(2,5) if rr<.20 else (random.randint(6,12) if rr<.65 else random.randint(12,22))
+    cid=len(clusters); members=[s0]; tris[s0]["cl"]=cid
+    while len(members)<target:
+        cand=[y for x in members for y in adj[x] if tris[y]["cl"] is None and tris[y]["cap"]==tris[s0]["cap"]]
+        if not cand: break
+        y=random.choice(cand); tris[y]["cl"]=cid; members.append(y)
+    clusters.append(members)
+singles_left=0
+for cid,m in enumerate(clusters):
+    if len(m)==1:
+        x=m[0]; nb=[tris[y]["cl"] for y in adj[x] if tris[y]["cl"]!=cid and tris[y]["cap"]==tris[x]["cap"] and len(clusters[tris[y]["cl"]])<26]
+        if nb:
+            to=random.choice(nb); clusters[to].append(x); tris[x]["cl"]=to; clusters[cid]=[]
+        else: singles_left+=1
+clusters=[m for m in clusters if m]
+def cross(o,a,b): return (a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0])
+def try_quad(x,y):
+    sh=set(tris[x]["v"])&set(tris[y]["v"])
+    if len(sh)!=2: return None
+    p,q=sorted(sh); r=[k for k in tris[x]["v"] if k not in sh][0]; s=[k for k in tris[y]["v"] if k not in sh][0]
+    quad=[r,p,s,q]; pts=[V[k] for k in quad]
+    sg=[cross(pts[i],pts[(i+1)%4],pts[(i+2)%4])>0 for i in range(4)]
+    if not(all(sg) or not any(sg)): return None     # must be convex
+    ang=[abs(cross(pts[i],pts[(i+1)%4],pts[(i+3)%4]))/ (math.dist(pts[i],pts[(i+1)%4])*math.dist(pts[i],pts[(i+3)%4])+1e-9) for i in range(4)]
+    if min(ang)<0.35: return None                    # skip near-degenerate corners
+    if max(ang)>0.99 and min(ang)>0.97: return None  # skip near-rectangles (look square)
+    return quad
 
 # ---- biome patches: voronoi seeds, each with a random biome from the local weights
 SEEDS=[]
@@ -80,67 +183,8 @@ def climate(lat,w):
     return w
 GENERIC=dict(forest=3,farm=2,mountain=3,desert=2,polar=1,vortex=1)
 
-IDS=dict(forest=[1,11,3], farm=[2,19,21,22], mountain=[5,6,20,24], desert=[0,7,8,18,23], polar=[9,10], vortex=[4])  # tile ids in the Factions texture sheet
-polys=[]; grid={}; stats=collections.defaultdict(collections.Counter)
-# 1) land cells -> two triangles each (random diagonal)
-tris=[]   # (vertex keys tuple of 3, centre lon, centre lat, owner, polar_cap)
-for j in range(NY):
-    for i in range(NX):
-        clon=(i+.5)*STEP_X; clat=-90+(j+.5)*STEP_Y
-        v,own,oid=land_val(clon,clat)
-        cap = abs(clat)>=82
-        if v<0.0 and not cap: continue
-        p00,p10,p11,p01=(i,j),(i+1,j),(i+1,j+1),(i,j+1)
-        pair=((p00,p10,p11),(p00,p11,p01)) if random.random()<.5 else ((p00,p10,p01),(p10,p11,p01))
-        for t,tri in enumerate(pair):
-            cx=sum(V[k][0] for k in tri)/3; cy=sum(V[k][1] for k in tri)/3
-            tris.append(dict(v=tri,cx=cx,cy=cy,own=own,oid=(None if cap else oid),cap=cap,cell=(i,j),cl=None))
-# 2) adjacency through shared edges; remove cells where two different landmasses touch (guarantees a sea channel)
-def build_adj():
-    edge=collections.defaultdict(list)
-    for n,t in enumerate(tris):
-        a_,b_,c_=t["v"]
-        for e in ((a_,b_),(b_,c_),(c_,a_)): edge[frozenset(e)].append(n)
-    adj=collections.defaultdict(set)
-    for lst in edge.values():
-        for x in lst:
-            for y in lst:
-                if x!=y: adj[x].add(y)
-    return adj
-for _round in range(8):
-    adj=build_adj()
-    kill=set()
-    for x in adj:
-        for y in adj[x]:
-            if x<y and tris[x]["oid"] and tris[y]["oid"] and tris[x]["oid"]!=tris[y]["oid"]:
-                kill.add(tris[x]["cell"]); kill.add(tris[y]["cell"])
-    print("round",_round,"contacts to clear:",len(kill))
-    if not kill: break
-    tris=[t for t in tris if t["cell"] not in kill]
-adj=build_adj()
-# 3) grow clusters of 1-3 or 3-7 triangles
-order=list(range(len(tris))); random.shuffle(order)
-clusters=[]
-for s0 in order:
-    if tris[s0]["cl"] is not None: continue
-    rr=random.random(); target=random.randint(2,5) if rr<.20 else (random.randint(6,12) if rr<.65 else random.randint(12,20))
-    cid=len(clusters); members=[s0]; tris[s0]["cl"]=cid
-    front=[s0]
-    while len(members)<target:
-        cand=[y for x in members for y in adj[x] if tris[y]["cl"] is None and tris[y]["cap"]==tris[s0]["cap"]]
-        if not cand: break
-        y=random.choice(cand); tris[y]["cl"]=cid; members.append(y)
-    clusters.append(members)
-# 4) single triangles only when there is no choice: fold singles into a neighbouring cluster
-singles_left=0
-for cid,m in enumerate(clusters):
-    if len(m)==1:
-        x=m[0]; nb=[tris[y]["cl"] for y in adj[x] if tris[y]["cl"]!=cid and tris[y]["cap"]==tris[x]["cap"] and len(clusters[tris[y]["cl"]])<24]
-        if nb:
-            to=random.choice(nb); clusters[to].append(x); tris[x]["cl"]=to; clusters[cid]=[]
-        else: singles_left+=1
-clusters=[m for m in clusters if m]
-# 5) biome per cluster (voronoi patch + breakaways), emit polygons: merge a cell's two triangles into a quad when both are in the same cluster (50%)
+
+IDS=dict(forest=[1,11,3], farm=[2,19,21,22], mountain=[5,6,20,24], desert=[0,7,8,18,23], polar=[9,10], vortex=[4])
 shapes=collections.Counter()
 for m in clusters:
     t0=tris[m[0]]
@@ -156,18 +200,20 @@ for m in clusters:
     for x in m:
         stats_key=(own[0] if own else "Isles")
         if not cap: stats[stats_key][b]+=1
-        grid[(round(tris[x]["cx"]/STEP_X*2),round((tris[x]["cy"]+90)/STEP_Y*2))]=b
-    byc=collections.defaultdict(list)
-    for x in m: byc[tris[x]["cell"]].append(x)
-    for cell,xs in byc.items():
-        if len(xs)==2 and random.random()<.5:
-            i,j=cell
-            q=[V[(i,j)],V[(i+1,j)],V[(i+1,j+1)],V[(i,j+1)]]
-            polys.append([random.choice(IDS[b])]+[c for p in q for c in p]); shapes["quad"]+=1
-        else:
-            for x in xs:
-                polys.append([random.choice(IDS[b])]+[c for k in tris[x]["v"] for c in V[k]]); shapes["tri"]+=1
-print("land (excl polar caps) %.0f%% of globe"%(100*sum(1 for t in tris if not t["cap"])/2/(NX*NY)));print("clusters:",len(clusters),"sizes:",dict(sorted(collections.Counter(len(m) for m in clusters).items())),"isolated singles:",singles_left)
+        grid[(round(tris[x]["cx"]/2),round((tris[x]["cy"]+90)/2))]=b
+    used=set(); mem=list(m); random.shuffle(mem)
+    for x in mem:
+        if x in used: continue
+        if random.random()<.45:
+            nbs=[y for y in adj[x] if y in m and y not in used]; random.shuffle(nbs)
+            done=False
+            for y in nbs:
+                q=try_quad(x,y)
+                if q:
+                    polys.append([random.choice(IDS[b])]+[c for k in q for c in V[k]]); used.add(x); used.add(y); shapes["quad"]+=1; done=True; break
+            if done: continue
+        used.add(x); polys.append([random.choice(IDS[b])]+[c for k in tris[x]["v"] for c in V[k]]); shapes["tri"]+=1
+print("land (excl caps): %.0f%% of area"%(100*sum(1 for t in tris if not t["cap"])*0+0));print("clusters:",len(clusters),"sizes:",dict(sorted(collections.Counter(len(m) for m in clusters).items())),"isolated singles:",singles_left)
 print("shapes:",dict(shapes))
 
 # ---- textures: each texture id mixes several battlescape terrains (names verified against vanilla xcom1 globe.rul)
@@ -209,7 +255,7 @@ isMaster: false
 master: xcom1
 requiredExtendedVersion: "5.5.1"
 """)
-open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.6 (placeholder world, mixed biomes)
+open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.9 (placeholder world, mixed biomes)
 Install: copy this folder into OXCE's mods folder (Android: /sdcard/openxcom/mods/), Options > Mods, enable, restart, start a NEW game.
 Regions/countries/cities are still vanilla Earth (mismatch expected).
 Each globe texture now maps to a weighted mix of battlescape terrains, plus continent flavour boxes.
@@ -220,7 +266,8 @@ for k,c in stats.items():
 # patch size metric: distinct biomes within +-3 cells
 dv=[]
 for (i,j),b in grid.items():
-    s={grid[(x,y)] for x in range(i-6,i+7) for y in range(j-6,j+7) if (x,y) in grid}
+    s={grid[(x,y)] for x in range(i-3,i+4) for y in range(j-3,j+4) if (x,y) in grid}
     dv.append(len(s))
 print("avg distinct biomes within ~12 deg:", round(sum(dv)/len(dv),2))
 import json; json.dump({"polys":polys},open("/home/claude/gen/polys.json","w"))
+
