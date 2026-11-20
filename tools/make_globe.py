@@ -74,26 +74,81 @@ def climate(lat,w):
 GENERIC=dict(forest=3,farm=2,mountain=3,desert=2,polar=1)
 
 IDS=dict(forest=[0,6,10,11], farm=[1,2,3,4], mountain=[5], desert=[7,8], polar=[9,12])
-polys=[]; grid=collections.defaultdict(str); stats=collections.defaultdict(collections.Counter)
+polys=[]; grid={}; stats=collections.defaultdict(collections.Counter)
+# 1) land cells -> two triangles each (random diagonal)
+tris=[]   # (vertex keys tuple of 3, centre lon, centre lat, owner, polar_cap)
 for j in range(NY):
     for i in range(NX):
         clon=(i+.5)*STEP_X; clat=-90+(j+.5)*STEP_Y
         v,own=land_val(clon,clat)
-        polar_cap = abs(clat)>=82
-        if v<0.04 and not polar_cap: continue
-        k=nearest_seed(clon,clat)
-        w=climate(clat, own[5] if own else GENERIC)
-        if k not in SEED_ROLL: SEED_ROLL[k]=pick(w)
-        b=SEED_ROLL[k]
-        r=random.random()
-        if r<0.14: b=pick(w)                       # fragmenting: individual cells break from the patch
-        elif r<0.20: b=random.choice(BIOMES[:4])   # oddities: oasis in desert, crag in forest...
-        if polar_cap: b="polar"
-        tid=random.choice(IDS[b])
-        a=V[(i,j)];bq=V[(i+1,j)];c=V[(i+1,j+1)];d=V[(i,j+1)]
-        polys.append([tid,*a,*bq,*c,*d])
-        grid[(i,j)]=b
-        if not polar_cap: stats[own[0] if own else "Isles"][b]+=1
+        cap = abs(clat)>=82
+        if v<0.04 and not cap: continue
+        p00,p10,p11,p01=(i,j),(i+1,j),(i+1,j+1),(i,j+1)
+        pair=((p00,p10,p11),(p00,p11,p01)) if random.random()<.5 else ((p00,p10,p01),(p10,p11,p01))
+        for t,tri in enumerate(pair):
+            cx=sum(V[k][0] for k in tri)/3; cy=sum(V[k][1] for k in tri)/3
+            tris.append(dict(v=tri,cx=cx,cy=cy,own=own,cap=cap,cell=(i,j),cl=None))
+# 2) adjacency through shared edges
+edge=collections.defaultdict(list)
+for n,t in enumerate(tris):
+    a_,b_,c_=t["v"]
+    for e in ((a_,b_),(b_,c_),(c_,a_)): edge[frozenset(e)].append(n)
+adj=collections.defaultdict(set)
+for lst in edge.values():
+    for x in lst:
+        for y in lst:
+            if x!=y: adj[x].add(y)
+# 3) grow clusters of 1-3 or 3-7 triangles
+order=list(range(len(tris))); random.shuffle(order)
+clusters=[]
+for s0 in order:
+    if tris[s0]["cl"] is not None: continue
+    target=random.randint(1,3) if random.random()<.35 else random.randint(3,7)
+    cid=len(clusters); members=[s0]; tris[s0]["cl"]=cid
+    front=[s0]
+    while len(members)<target:
+        cand=[y for x in members for y in adj[x] if tris[y]["cl"] is None and tris[y]["cap"]==tris[s0]["cap"]]
+        if not cand: break
+        y=random.choice(cand); tris[y]["cl"]=cid; members.append(y)
+    clusters.append(members)
+# 4) single triangles only when there is no choice: fold singles into a neighbouring cluster
+singles_left=0
+for cid,m in enumerate(clusters):
+    if len(m)==1:
+        x=m[0]; nb=[tris[y]["cl"] for y in adj[x] if tris[y]["cl"]!=cid and tris[y]["cap"]==tris[x]["cap"] and len(clusters[tris[y]["cl"]])<8]
+        if nb:
+            to=random.choice(nb); clusters[to].append(x); tris[x]["cl"]=to; clusters[cid]=[]
+        else: singles_left+=1
+clusters=[m for m in clusters if m]
+# 5) biome per cluster (voronoi patch + breakaways), emit polygons: merge a cell's two triangles into a quad when both are in the same cluster (50%)
+shapes=collections.Counter()
+for m in clusters:
+    t0=tris[m[0]]
+    cx=sum(tris[x]["cx"] for x in m)/len(m); cy=sum(tris[x]["cy"] for x in m)/len(m)
+    own=t0["own"]; cap=t0["cap"]
+    w=climate(cy, own[5] if own else GENERIC)
+    k=nearest_seed(cx,cy)
+    if k not in SEED_ROLL: SEED_ROLL[k]=pick(w)
+    b=SEED_ROLL[k]; r=random.random()
+    if r<0.30: b=pick(w)
+    elif r<0.38: b=random.choice(BIOMES[:4])
+    if cap: b="polar"
+    for x in m:
+        stats_key=(own[0] if own else "Isles")
+        if not cap: stats[stats_key][b]+=1
+        grid[(round(tris[x]["cx"]/STEP_X*2),round((tris[x]["cy"]+90)/STEP_Y*2))]=b
+    byc=collections.defaultdict(list)
+    for x in m: byc[tris[x]["cell"]].append(x)
+    for cell,xs in byc.items():
+        if len(xs)==2 and random.random()<.5:
+            i,j=cell
+            q=[V[(i,j)],V[(i+1,j)],V[(i+1,j+1)],V[(i,j+1)]]
+            polys.append([random.choice(IDS[b])]+[c for p in q for c in p]); shapes["quad"]+=1
+        else:
+            for x in xs:
+                polys.append([random.choice(IDS[b])]+[c for k in tris[x]["v"] for c in V[k]]); shapes["tri"]+=1
+print("clusters:",len(clusters),"sizes:",dict(sorted(collections.Counter(len(m) for m in clusters).items())),"isolated singles:",singles_left)
+print("shapes:",dict(shapes))
 
 # ---- textures: each texture id mixes several battlescape terrains (names verified against vanilla xcom1 globe.rul)
 MIX={ "forest":[("FOREST",45),("JUNGLE",25),("MOUNT",15),("CULTA",15)],
@@ -120,12 +175,12 @@ open(OUT+"/Ruleset/globe.rul","w").write("\n".join(yml)+"\n")
 open(OUT+"/metadata.yml","w").write("""id: RabblingsGeoscape
 name: Rabblings Geoscape (globe test)
 description: Replaces the Earth globe with a placeholder Rabblings world with mixed biomes. Test build, use a new game.
-version: 0.0.2
+version: 0.0.3
 author: Luke83
 isMaster: false
 master: xcom1
 """)
-open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.2 (placeholder world, mixed biomes)
+open(OUT+"/README.txt","w").write("""Rabblings Geoscape - globe test v0.0.3 (placeholder world, mixed biomes)
 Install: copy this folder into OXCE's mods folder (Android: /sdcard/openxcom/mods/), Options > Mods, enable, restart, start a NEW game.
 Regions/countries/cities are still vanilla Earth (mismatch expected).
 Each globe texture now maps to a weighted mix of battlescape terrains, plus continent flavour boxes.
@@ -136,7 +191,7 @@ for k,c in stats.items():
 # patch size metric: distinct biomes within +-3 cells
 dv=[]
 for (i,j),b in grid.items():
-    s={grid[(x,y)] for x in range(i-3,i+4) for y in range(j-3,j+4) if (x,y) in grid}
+    s={grid[(x,y)] for x in range(i-6,i+7) for y in range(j-6,j+7) if (x,y) in grid}
     dv.append(len(s))
-print("avg distinct biomes within 3 cells:", round(sum(dv)/len(dv),2))
+print("avg distinct biomes within ~12 deg:", round(sum(dv)/len(dv),2))
 import json; json.dump({"polys":polys},open("/home/claude/gen/polys.json","w"))
